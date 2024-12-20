@@ -6,7 +6,11 @@ import {
     State,
 } from "@ai16z/eliza";
 import { createGraphRAG } from "./driver";
-import { GraphRAGResponse } from "./types";
+import {
+    GraphRAGResponse,
+    DocumentRelationType,
+    NodeProperties,
+} from "./types";
 import NodeCache from "node-cache";
 import * as path from "path";
 
@@ -68,6 +72,96 @@ export class RAGGraphProvider {
     async close(): Promise<void> {
         await this.graphRAG.close();
     }
+
+    async createVectorIndex(): Promise<void> {
+        try {
+            await this.graphRAG.createVectorIndex();
+        } catch (error) {
+            console.error("Error creating vector index:", error);
+            throw error;
+        }
+    }
+
+    async addDocument(node: {
+        id: string;
+        title: string;
+        content: string;
+        connections?: Array<{
+            nodeId: string;
+            relationType: DocumentRelationType;
+            direction: "from" | "to";
+        }>;
+    }): Promise<void> {
+        try {
+            await this.graphRAG.addDocument(node);
+        } catch (error) {
+            console.error("Error adding document:", error);
+            throw error;
+        }
+    }
+
+    async getDocument(id: string): Promise<NodeProperties | null> {
+        try {
+            return await this.graphRAG.getDocument(id);
+        } catch (error) {
+            console.error("Error getting document:", error);
+            throw error;
+        }
+    }
+
+    async updateDocument(
+        id: string,
+        updates: {
+            title?: string;
+            content?: string;
+        }
+    ): Promise<void> {
+        try {
+            await this.graphRAG.updateDocument(id, updates);
+        } catch (error) {
+            console.error("Error updating document:", error);
+            throw error;
+        }
+    }
+
+    async deleteDocument(id: string): Promise<void> {
+        try {
+            await this.graphRAG.deleteDocument(id);
+        } catch (error) {
+            console.error("Error deleting document:", error);
+            throw error;
+        }
+    }
+
+    async addConnection(
+        sourceId: string,
+        targetId: string,
+        relationType: DocumentRelationType
+    ): Promise<void> {
+        try {
+            await this.graphRAG.addConnection(sourceId, targetId, relationType);
+        } catch (error) {
+            console.error("Error adding connection:", error);
+            throw error;
+        }
+    }
+
+    async deleteConnection(
+        sourceId: string,
+        targetId: string,
+        relationType: DocumentRelationType
+    ): Promise<void> {
+        try {
+            await this.graphRAG.deleteConnection(
+                sourceId,
+                targetId,
+                relationType
+            );
+        } catch (error) {
+            console.error("Error deleting connection:", error);
+            throw error;
+        }
+    }
 }
 
 const ragGraphProvider: Provider = {
@@ -88,7 +182,7 @@ const ragGraphProvider: Provider = {
                 runtime.cacheManager
             );
 
-            const response = await provider.query(message.content);
+            const response = await provider.query(message.content.text);
             await provider.close();
 
             return response.fullContext;
