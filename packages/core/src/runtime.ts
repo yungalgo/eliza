@@ -1,8 +1,8 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { glob } from "glob";
 import { join } from "path";
 import { names, uniqueNamesGenerator } from "unique-names-generator";
-import { v4 as uuidv4 } from "uuid";
+import { v4 as uuidv4, v4 } from "uuid";
 import {
     composeActionExamples,
     formatActionNames,
@@ -51,6 +51,7 @@ import {
     type ServiceType,
     type State,
     type UUID,
+    Content,
 } from "./types.ts";
 import { stringToUuid } from "./uuid.ts";
 /**
@@ -65,6 +66,11 @@ function isDirectoryItem(item: any): item is DirectoryItem {
         "directory" in item &&
         typeof item.directory === "string"
     );
+}
+
+function isKnowledgeArray(knowledge: Character['knowledge']): 
+    knowledge is (string | DirectoryItem)[] {
+    return Array.isArray(knowledge);
 }
 
 export class AgentRuntime implements IAgentRuntime {
@@ -475,18 +481,15 @@ export class AgentRuntime implements IAgentRuntime {
 
         if (
             this.character &&
-            this.character.knowledge &&
-            this.character.knowledge.length > 0
+            this.character.knowledge
         ) {
-            elizaLogger.info(
-                `[RAG Check] RAG Knowledge enabled: ${this.character.settings.ragKnowledge ? true : false}`,
-            );
-            elizaLogger.info(
-                `[RAG Check] Knowledge items:`,
-                this.character.knowledge,
-            );
+            // Check if it's the array format
+            if (isKnowledgeArray(this.character.knowledge) && this.character.knowledge.length > 0) {
+                elizaLogger.info(
+                    `[Knowledge] Processing knowledge items:`,
+                    this.character.knowledge,
+                );
 
-            if (this.character.settings.ragKnowledge) {
                 // Type guards with logging for each knowledge type
                 const [directoryKnowledge, pathKnowledge, stringKnowledge] =
                     this.character.knowledge.reduce(
@@ -494,18 +497,18 @@ export class AgentRuntime implements IAgentRuntime {
                             if (typeof item === "object") {
                                 if (isDirectoryItem(item)) {
                                     elizaLogger.debug(
-                                        `[RAG Filter] Found directory item: ${JSON.stringify(item)}`,
+                                        `[Knowledge] Found directory item: ${JSON.stringify(item)}`,
                                     );
                                     acc[0].push(item);
                                 } else if ("path" in item) {
                                     elizaLogger.debug(
-                                        `[RAG Filter] Found path item: ${JSON.stringify(item)}`,
+                                        `[Knowledge] Found path item: ${JSON.stringify(item)}`,
                                     );
                                     acc[1].push(item);
                                 }
                             } else if (typeof item === "string") {
                                 elizaLogger.debug(
-                                    `[RAG Filter] Found string item: ${item.slice(0, 100)}...`,
+                                    `[Knowledge] Found string item: ${item.slice(0, 100)}...`,
                                 );
                                 acc[2].push(item);
                             }
@@ -519,19 +522,19 @@ export class AgentRuntime implements IAgentRuntime {
                     );
 
                 elizaLogger.info(
-                    `[RAG Summary] Found ${directoryKnowledge.length} directories, ${pathKnowledge.length} paths, and ${stringKnowledge.length} strings`,
+                    `[Knowledge] Found ${directoryKnowledge.length} directories, ${pathKnowledge.length} paths, and ${stringKnowledge.length} strings`,
                 );
 
                 // Process each type of knowledge
                 if (directoryKnowledge.length > 0) {
                     elizaLogger.info(
-                        `[RAG Process] Processing directory knowledge sources:`,
+                        `[Knowledge] Processing directory knowledge sources:`,
                     );
                     for (const dir of directoryKnowledge) {
                         elizaLogger.info(
                             `  - Directory: ${dir.directory} (shared: ${!!dir.shared})`,
                         );
-                        await this.processCharacterRAGDirectory(dir);
+                        await this.processCharacterKnowledgeDirectory(dir);
                     }
                 }
 
@@ -560,14 +563,10 @@ export class AgentRuntime implements IAgentRuntime {
                     );
                     await this.processCharacterKnowledge(stringKnowledge);
                 }
-            } else {
-                // Non-RAG mode: only process string knowledge
-                const stringKnowledge = this.character.knowledge.filter(
-                    (item): item is string => typeof item === "string",
-                );
-                await this.processCharacterKnowledge(stringKnowledge);
             }
         }
+
+        await this.loadKnowledge();
     }
 
     async stop() {
@@ -629,7 +628,7 @@ export class AgentRuntime implements IAgentRuntime {
      * Processes directory-based RAG knowledge by recursively loading and processing files.
      * @param dirConfig The directory configuration containing path and shared flag
      */
-    private async processCharacterRAGDirectory(dirConfig: {
+    private async processCharacterKnowledgeDirectory(dirConfig: {
         directory: string;
         shared?: boolean;
     }) {
@@ -652,7 +651,7 @@ export class AgentRuntime implements IAgentRuntime {
                 return;
             }
 
-            elizaLogger.debug(`[RAG Directory] Searching in: ${dirPath}`);
+            elizaLogger.debug(`[Knowledge] Searching in: ${dirPath}`);
             // Use glob to find all matching files in directory
             const files = await glob("**/*.{md,txt,pdf}", {
                 cwd: dirPath,
@@ -668,7 +667,7 @@ export class AgentRuntime implements IAgentRuntime {
             }
 
             elizaLogger.info(
-                `[RAG Directory] Found ${files.length} files in ${dirConfig.directory}`,
+                `[Knowledge] Found ${files.length} files in ${dirConfig.directory}`,
             );
 
             // Process files in batches to avoid memory issues
@@ -682,7 +681,7 @@ export class AgentRuntime implements IAgentRuntime {
                             const relativePath = join(sanitizedDir, file);
 
                             elizaLogger.debug(
-                                `[RAG Directory] Processing file ${i + 1}/${files.length}:`,
+                                `[Knowledge] Processing file ${i + 1}/${files.length}:`,
                                 {
                                     file,
                                     relativePath,
@@ -704,7 +703,7 @@ export class AgentRuntime implements IAgentRuntime {
                             }
                         } catch (error) {
                             elizaLogger.error(
-                                `[RAG Directory] Failed to process file: ${file}`,
+                                `[Knowledge] Failed to process file: ${file}`,
                                 error instanceof Error
                                     ? {
                                           name: error.name,
@@ -718,16 +717,16 @@ export class AgentRuntime implements IAgentRuntime {
                 );
 
                 elizaLogger.debug(
-                    `[RAG Directory] Completed batch ${Math.min(i + BATCH_SIZE, files.length)}/${files.length} files`,
+                    `[Knowledge] Completed batch ${Math.min(i + BATCH_SIZE, files.length)}/${files.length} files`,
                 );
             }
 
             elizaLogger.success(
-                `[RAG Directory] Successfully processed directory: ${sanitizedDir}`,
+                `[Knowledge] Successfully processed directory: ${sanitizedDir}`,
             );
         } catch (error) {
             elizaLogger.error(
-                `[RAG Directory] Failed to process directory: ${sanitizedDir}`,
+                `[Knowledge] Failed to process directory: ${sanitizedDir}`,
                 error instanceof Error
                     ? {
                           name: error.name,
@@ -1562,6 +1561,54 @@ Text: ${attachment.text}
             recentMessagesData,
             attachments: formattedAttachments,
         } as State;
+    }
+
+    async loadKnowledge() {
+        if (!this.character.knowledge) {
+            return;
+        }
+
+        // Type guard to check if knowledge is the new format with sources
+        const isNewKnowledgeFormat = (knowledge: any): 
+            knowledge is { sources: Array<{ path?: string; content?: string; metadata?: Record<string, any> }> } => {
+            return 'sources' in knowledge;
+        };
+
+        if (isNewKnowledgeFormat(this.character.knowledge)) {
+            for (const source of this.character.knowledge.sources) {
+                let content: Content;
+
+                if (source.path) {
+                    const filePath = join(process.cwd(), source.path);
+                    if (!existsSync(filePath)) {
+                        throw new Error(`Knowledge file not found: ${filePath}`);
+                    }
+                    content = {
+                        text: readFileSync(filePath, 'utf-8'),
+                        metadata: source.metadata
+                    };
+                } else if (source.content) {
+                    content = {
+                        text: source.content,
+                        metadata: source.metadata
+                    };
+                } else {
+                    throw new Error('Knowledge source must have either path or content');
+                }
+
+                const knowledgeItem: KnowledgeItem = {
+                    id: v4() as UUID,
+                    agentId: this.agentId,
+                    content,
+                    createdAt: Date.now()
+                };
+
+                await knowledge.set(this, knowledgeItem);
+            }
+        } else {
+            // Handle old format if needed
+            // this.character.knowledge is (string | DirectoryItem)[]
+        }
     }
 }
 
