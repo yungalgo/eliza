@@ -82,6 +82,9 @@
   },
   "packageManager": "pnpm@9.15.0",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "packages/plugins/*",
+    "agent",
+    "client"
   ]
 }
