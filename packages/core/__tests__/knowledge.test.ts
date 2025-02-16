@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import knowledge from "../src/knowledge";
 import type { AgentRuntime } from "../src/runtime";
 import { KnowledgeItem, type Memory } from "../src/types";
+import { UUID } from "../src/types";
 
 // Mock dependencies
 vi.mock("../embedding", () => ({
@@ -22,9 +23,9 @@ vi.mock("../uuid", () => ({
 describe("Knowledge Module", () => {
     describe("preprocess", () => {
         it("should handle invalid inputs", () => {
-            expect(knowledge.preprocess(null)).toBe("");
-            expect(knowledge.preprocess(undefined)).toBe("");
-            expect(knowledge.preprocess("")).toBe("");
+            expect(knowledge.preprocess("" as any)).toBe("");
+            expect(knowledge.preprocess(undefined as any)).toBe("");
+            expect(knowledge.preprocess(null as any)).toBe("");
         });
 
         it("should remove code blocks and inline code", () => {
@@ -116,7 +117,43 @@ describe("Knowledge Module", () => {
                 const result = await knowledge.get(mockRuntime, message);
                 expect(result).toEqual([]);
             });
-        });
+
+            it("should fetch knowledge without requiring agentId", async () => {
+                const message: Memory = {
+                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                    content: { text: "test query" },
+                    userId: "test-user-0000-0000-0000-000000000000" as UUID
+                };
+
+                await knowledge.get(mockRuntime, message);
+
+                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
+                expect(searchFn).toHaveBeenCalledWith(
+                    expect.any(Array),
+                    expect.objectContaining({
+                        roomId: "test-room-0000-0000-0000-000000000000",
+                        match_threshold: 0.1,
+                        unique: true
+                    })
+                );
+            });
+
+            it("should maintain RAG functionality with embeddings", async () => {
+                const message: Memory = {
+                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                    content: { text: "test query" },
+                    userId: "test-user-0000-0000-0000-000000000000" as UUID
+                };
+
+                await knowledge.get(mockRuntime, message);
+
+                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
+                expect(searchFn).toHaveBeenCalled();
+                expect(Array.isArray(searchFn.mock.calls[0][0])).toBe(true);
+            });
         });
     });
+});
 

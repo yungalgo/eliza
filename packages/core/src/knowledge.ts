@@ -7,9 +7,14 @@ import elizaLogger from "./logger.ts";
 
 async function get(
     runtime: AgentRuntime,
-    message: Memory
+    message: Memory,
+    options: { 
+        agentId?: UUID,
+        count?: number,  // Optional result limit
+        matchThreshold?: number 
+    } = {}
 ): Promise<KnowledgeItem[]> {
-    // Add validation for message
+    // Validate message
     if (!message?.content?.text) {
         elizaLogger.warn("Invalid message for knowledge query:", {
             message,
@@ -33,12 +38,15 @@ async function get(
     }
 
     const embedding = await embed(runtime, processed);
+    
+    // Match the expected interface
     const fragments = await runtime.knowledgeManager.searchMemoriesByEmbedding(
         embedding,
         {
-            roomId: message.agentId,
-            count: 5,
-            match_threshold: 0.1,
+            roomId: message.roomId,
+            count: options.count || 5,
+            match_threshold: options.matchThreshold || 0.1,
+            unique: true
         }
     );
 
@@ -61,7 +69,12 @@ async function get(
 
     return knowledgeDocuments
         .filter((memory) => memory !== null)
-        .map((memory) => ({ id: memory.id, agentId: runtime.agentId, content: memory.content }));
+        .map((memory) => ({
+            id: memory.id,
+            agentId: memory.agentId,
+            content: memory.content,
+            similarity: memory.similarity
+        }));
 }
 
 async function set(

@@ -863,7 +863,6 @@ export type Character = {
             [key: string]: any[];
         };
         transcription?: TranscriptionProvider;
-        ragKnowledge?: boolean;
     };
 
     /** Optional client-specific config */
