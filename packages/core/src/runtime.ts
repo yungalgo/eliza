@@ -54,6 +54,7 @@ import {
     Content,
 } from "./types.ts";
 import { stringToUuid } from "./uuid.ts";
+import { createKnowledgeLoader } from './knowledge-loader';
 /**
  * Represents the runtime environment for an agent, handling message processing,
  * action registration, and interaction with external services like OpenAI and Supabase.
@@ -179,6 +180,8 @@ export class AgentRuntime implements IAgentRuntime {
     clients: ClientInstance[] = [];
 
     // verifiableInferenceAdapter?: IVerifiableInferenceAdapter;
+
+    private knowledgeLoader = createKnowledgeLoader();
 
     registerMemoryManager(manager: IMemoryManager): void {
         if (!manager.tableName) {
@@ -1577,42 +1580,65 @@ Text: ${attachment.text}
 
         if (isNewKnowledgeFormat(this.character.knowledge)) {
             for (const source of this.character.knowledge.sources) {
-                let content: Content;
+                try {
+                    // Use the new loader
+                    const content = await this.knowledgeLoader.loadContent(source);
+                    
+                    const knowledgeItem: KnowledgeItem = {
+                        id: v4() as UUID,
+                        agentId: this.agentId,
+                        content,
+                        createdAt: Date.now()
+                    };
 
-                if (source.path) {
-                    const filePath = join(process.cwd(), source.path);
-                    if (!existsSync(filePath)) {
-                        throw new Error(`Knowledge file not found: ${filePath}`);
-                    }
-                    content = {
-                        text: readFileSync(filePath, 'utf-8'),
-                        metadata: source.metadata,
-                        source: source.path,  // Add source
-                        type: 'static'  // Default to static for file imports
-                    };
-                } else if (source.content) {
-                    content = {
-                        text: source.content,
-                        metadata: source.metadata,
-                        source: 'inline',  // Mark as inline content
-                        type: 'static'
-                    };
-                } else {
-                    throw new Error('Knowledge source must have either path or content');
+                    await knowledge.set(this, knowledgeItem);
+                } catch (error) {
+                    elizaLogger.error(`Failed to load knowledge source: ${error.message}`, {
+                        source,
+                        error
+                    });
                 }
-
-                const knowledgeItem: KnowledgeItem = {
-                    id: v4() as UUID,
-                    agentId: this.agentId,
-                    content,
-                    createdAt: Date.now()  // Make sure createdAt is included
-                };
-
-                await knowledge.set(this, knowledgeItem);
             }
         } else {
-            // Handle old format if needed
-            // this.character.knowledge is (string | DirectoryItem)[]
+            // Handle legacy format
+            for (const item of this.character.knowledge) {
+                try {
+                    if (typeof item === 'string') {
+                        const content = await this.knowledgeLoader.loadContent({
+                            path: item
+                        });
+                        
+                        const knowledgeItem: KnowledgeItem = {
+                            id: v4() as UUID,
+                            agentId: this.agentId,
+                            content,
+                            createdAt: Date.now()
+                        };
+
+                        await knowledge.set(this, knowledgeItem);
+                    } else {
+                        // Handle DirectoryItem
+                        const content = await this.knowledgeLoader.loadContent({
+                            path: item.directory,
+                            metadata: { shared: item.shared }
+                        });
+                        
+                        const knowledgeItem: KnowledgeItem = {
+                            id: v4() as UUID,
+                            agentId: this.agentId,
+                            content,
+                            createdAt: Date.now()
+                        };
+
+                        await knowledge.set(this, knowledgeItem);
+                    }
+                } catch (error) {
+                    elizaLogger.error(`Failed to load knowledge item: ${error.message}`, {
+                        item,
+                        error
+                    });
+                }
+            }
         }
     }
 }

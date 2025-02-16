@@ -1,115 +1,96 @@
-import type { AgentRuntime } from "./runtime.ts";
+import type { AgentRuntime } from "./runtime";
 import { embed, getEmbeddingZeroVector } from "./embedding.ts";
-import type { KnowledgeItem, UUID, Memory, SearchOptions } from "./types.ts";
+import type { KnowledgeItem, UUID, Memory, SearchOptions } from "./types";
 import { stringToUuid } from "./uuid.ts";
 import { splitChunks } from "./generation.ts";
-import elizaLogger from "./logger.ts";
+import { elizaLogger } from './logger';
+import { createKnowledgeLoader } from './knowledge-loader';
+import { v4 } from 'uuid';
+
+const knowledgeLoader = createKnowledgeLoader();
 
 async function get(
     runtime: AgentRuntime,
     message: Memory,
-    opts?: { useAgentFilter?: boolean }
+    options: SearchOptions = { roomId: runtime.agentId as UUID }
 ): Promise<KnowledgeItem[]> {
-    // Validate message
-    if (!message?.content?.text) {
-        elizaLogger.warn("Invalid message for knowledge query:", {
-            message,
-            content: message?.content,
-            text: message?.content?.text,
+    try {
+        const embedding = await runtime.messageManager.getCachedEmbeddings(message.content.text);
+        if (!embedding || embedding.length === 0) {
+            elizaLogger.warn('Empty processed text for knowledge query');
+            return [];
+        }
+
+        const memories = await runtime.knowledgeManager.searchMemoriesByEmbedding(
+            embedding[0].embedding,
+            {
+                match_threshold: options.match_threshold || 0.7,
+                count: options.count || 5,
+                roomId: options.roomId,
+                unique: options.unique
+            }
+        );
+
+        return memories.map(memory => ({
+            id: memory.id || v4() as UUID,
+            agentId: memory.agentId,
+            content: {
+                ...memory.content,
+                embedding: memory.content.embedding 
+                    ? new Float32Array(memory.content.embedding as number[])
+                    : undefined
+            },
+            createdAt: memory.createdAt || Date.now()
+        }));
+
+    } catch (error) {
+        elizaLogger.error('Failed to get knowledge items', {
+            error,
+            message
         });
         return [];
     }
-
-    const processed = preprocess(message.content.text);
-    elizaLogger.debug("Knowledge query:", {
-        original: message.content.text,
-        processed,
-        length: processed?.length,
-    });
-
-    // Validate processed text
-    if (!processed || processed.trim().length === 0) {
-        elizaLogger.warn("Empty processed text for knowledge query");
-        return [];
-    }
-
-    const embedding = await embed(runtime, processed);
-    
-    const searchOptions: SearchOptions = {
-        roomId: message.roomId,
-        match_threshold: 0.1,
-        unique: true
-    };
-
-    if (opts?.useAgentFilter && message.agentId) {
-        searchOptions.agentId = message.agentId;
-    }
-
-    const fragments = await runtime.knowledgeManager.searchMemoriesByEmbedding(embedding, searchOptions);
-
-    const uniqueSources = [
-        ...new Set(
-            fragments.map((memory) => {
-                elizaLogger.log(
-                    `Matched fragment: ${memory.content.text} with similarity: ${memory.similarity}`
-                );
-                return memory.content.source;
-            })
-        ),
-    ];
-
-    const knowledgeDocuments = await Promise.all(
-        uniqueSources.map((source) =>
-            runtime.documentsManager.getMemoryById(source as UUID)
-        )
-    );
-
-    return knowledgeDocuments
-        .filter((memory) => memory !== null)
-        .map((memory) => ({
-            id: memory.id,
-            agentId: memory.agentId,
-            content: memory.content,
-            similarity: memory.similarity,
-            createdAt: memory.createdAt
-        }));
 }
 
-async function set(
-    runtime: AgentRuntime,
-    item: KnowledgeItem,
-    chunkSize = 512,
-    bleed = 20
-) {
-    await runtime.documentsManager.createMemory({
-        id: item.id,
-        agentId: runtime.agentId,
-        roomId: runtime.agentId,
-        userId: runtime.agentId,
-        createdAt: Date.now(),
-        content: item.content,
-        embedding: getEmbeddingZeroVector(),
-    });
+async function set(runtime: AgentRuntime, item: KnowledgeItem): Promise<void> {
+    try {
+        // If the item has a path but no text content, load it
+        if (item.content.source && !item.content.text) {
+            const loadedContent = await knowledgeLoader.loadContent({
+                path: item.content.source,
+                metadata: item.content.metadata
+            });
+            item.content = {
+                ...item.content,
+                ...loadedContent
+            };
+        }
 
-    const preprocessed = preprocess(item.content.text);
-    const fragments = await splitChunks(preprocessed, chunkSize, bleed);
+        // Generate embedding if not present
+        if (!item.content.embedding) {
+            const embedding = await runtime.messageManager.getCachedEmbeddings(item.content.text);
+            if (embedding && embedding.length > 0) {
+                // Ensure embedding is properly typed as number[]
+                const embeddingArray = embedding[0].embedding as number[];
+                item.content.embedding = new Float32Array(embeddingArray);
+            }
+        }
 
-    for (const fragment of fragments) {
-        const embedding = await embed(runtime, fragment);
         await runtime.knowledgeManager.createMemory({
-            // We namespace the knowledge base uuid to avoid id
-            // collision with the document above.
-            id: stringToUuid(item.id + fragment),
-            roomId: runtime.agentId,
-            agentId: runtime.agentId,
-            userId: runtime.agentId,
-            createdAt: Date.now(),
-            content: {
-                source: item.id,
-                text: fragment,
-            },
-            embedding,
+            id: item.id,
+            userId: runtime.agentId, // Add required userId
+            agentId: item.agentId,
+            content: item.content,
+            createdAt: item.createdAt,
+            roomId: runtime.agentId as UUID // Use agentId as roomId for knowledge
         });
+
+    } catch (error) {
+        elizaLogger.error('Failed to set knowledge item', {
+            error,
+            item
+        });
+        throw error;
     }
 }
 

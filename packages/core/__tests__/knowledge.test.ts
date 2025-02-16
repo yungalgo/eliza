@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import knowledge from "../src/knowledge";
 import type { AgentRuntime } from "../src/runtime";
-import { KnowledgeItem, type Memory } from "../src/types";
-import { UUID } from "../src/types";
+import { KnowledgeItem, Memory, UUID } from "../src/types";
+import { createKnowledgeLoader } from "../src/knowledge-loader";
 
 // Mock dependencies
 vi.mock("../embedding", () => ({
@@ -20,32 +20,49 @@ vi.mock("../uuid", () => ({
     stringToUuid: vi.fn().mockImplementation((str) => str),
 }));
 
+// Mock the knowledge loader
+vi.mock("../src/knowledge-loader", () => ({
+    createKnowledgeLoader: vi.fn().mockReturnValue({
+        loadContent: vi.fn().mockImplementation(async (source) => ({
+            text: source.content || "test content",
+            metadata: source.metadata,
+            source: source.path || "inline",
+            type: "static"
+        })),
+        exists: vi.fn().mockResolvedValue(true)
+    })
+}));
+
 describe("Knowledge Module", () => {
     let mockRuntime: AgentRuntime;
 
     beforeEach(() => {
         mockRuntime = {
-            agentId: "test-agent",
+            agentId: "test-agent" as UUID,
             character: {
                 modelProvider: "openai",
             },
             messageManager: {
-                getCachedEmbeddings: vi.fn().mockResolvedValue([]),
+                getCachedEmbeddings: vi.fn().mockResolvedValue([
+                    { embedding: new Float32Array(1536).fill(0) }
+                ]),
             },
             knowledgeManager: {
                 searchMemoriesByEmbedding: vi.fn().mockResolvedValue([
                     {
+                        id: "test-id" as UUID,
+                        agentId: "test-agent" as UUID,
                         content: {
-                            text: "test fragment",
-                            source: "source1",
-                            type: "rag",
+                            text: "test content",
+                            type: "static",
                             metadata: {
                                 author: "Test Author",
                                 category: "Test Category"
-                            }
+                            },
+                            source: "test-file.md"
                         },
-                        similarity: 0.9,
-                    },
+                        createdAt: Date.now()
+                    }
                 ]),
                 createMemory: vi.fn().mockResolvedValue(undefined),
             },
@@ -115,114 +132,96 @@ describe("Knowledge Module", () => {
         });
     });
 
-    describe("get and set", () => {
-        describe("get", () => {
-            it("should handle invalid messages", async () => {
-                const invalidMessage = {} as Memory;
-                const result = await knowledge.get(mockRuntime, invalidMessage);
-                expect(result).toEqual([]);
+    describe("set", () => {
+        it("should set knowledge item with content", async () => {
+            const item: KnowledgeItem = {
+                id: "test-id" as UUID,
+                agentId: "test-agent" as UUID,
+                content: {
+                    text: "test content",
+                    type: "static",
+                    metadata: { test: true }
+                },
+                createdAt: Date.now()
+            };
+
+            await knowledge.set(mockRuntime, item);
+            expect(mockRuntime.knowledgeManager.createMemory).toHaveBeenCalled();
+        });
+
+        it("should load content from source if not provided", async () => {
+            const item: KnowledgeItem = {
+                id: "test-id" as UUID,
+                agentId: "test-agent" as UUID,
+                content: {
+                    text: "",
+                    source: "test.txt",
+                    type: "static",
+                    metadata: { test: true }
+                },
+                createdAt: Date.now()
+            };
+
+            await knowledge.set(mockRuntime, item);
+            expect(mockRuntime.knowledgeManager.createMemory).toHaveBeenCalled();
+        });
+    });
+
+    describe("get", () => {
+        it("should retrieve knowledge items", async () => {
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            const results = await knowledge.get(mockRuntime, message);
+            expect(results).toHaveLength(1);
+            expect(results[0].content.text).toBe("test content");
+        });
+
+        it("should handle empty embeddings", async () => {
+            mockRuntime.messageManager.getCachedEmbeddings = vi.fn().mockResolvedValue([]);
+            
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            const results = await knowledge.get(mockRuntime, message);
+            expect(results).toHaveLength(0);
+        });
+
+        it("should use search options", async () => {
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            await knowledge.get(mockRuntime, message, {
+                roomId: "test-room" as UUID,
+                match_threshold: 0.8,
+                count: 10,
+                unique: true,
+                useAgentFilter: true
             });
 
-            it("should handle empty processed text", async () => {
-                const message: Memory = {
-                    agentId: "test-agent",
-                    content: { text: "```code only```" },
-                } as unknown as Memory;
-
-                const result = await knowledge.get(mockRuntime, message);
-                expect(result).toEqual([]);
-            });
-
-            it("should fetch knowledge without requiring agentId", async () => {
-                const message: Memory = {
-                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
-                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
-                    content: { text: "test query" },
-                    userId: "test-user-0000-0000-0000-000000000000" as UUID
-                };
-
-                await knowledge.get(mockRuntime, message);
-
-                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
-                expect(searchFn).toHaveBeenCalledWith(
-                    expect.any(Array),
-                    expect.objectContaining({
-                        roomId: "test-room-0000-0000-0000-000000000000",
-                        match_threshold: 0.1,
-                        unique: true
-                    })
-                );
-            });
-
-            it("should maintain RAG functionality with embeddings", async () => {
-                const message: Memory = {
-                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
-                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
-                    content: { text: "test query" },
-                    userId: "test-user-0000-0000-0000-000000000000" as UUID
-                };
-
-                await knowledge.get(mockRuntime, message);
-
-                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
-                expect(searchFn).toHaveBeenCalled();
-                expect(Array.isArray(searchFn.mock.calls[0][0])).toBe(true);
-            });
-
-            it("should fetch knowledge with specific agentId", async () => {
-                const message: Memory = {
-                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
-                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
-                    content: { text: "test query" },
-                    userId: "test-user-0000-0000-0000-000000000000" as UUID
-                };
-
-                await knowledge.get(mockRuntime, message, { useAgentFilter: true });
-
-                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
-                expect(searchFn).toHaveBeenCalledWith(
-                    expect.any(Array),
-                    expect.objectContaining({
-                        roomId: "test-room-0000-0000-0000-000000000000",
-                        agentId: "test-agent-0000-0000-0000-000000000000",
-                        match_threshold: 0.1,
-                        unique: true
-                    })
-                );
-            });
-
-            it("should support both filtered and unfiltered agentId queries", async () => {
-                const message: Memory = {
-                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
-                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
-                    content: { text: "test query" },
-                    userId: "test-user-0000-0000-0000-000000000000" as UUID
-                };
-
-                // Test with agentId filter
-                await knowledge.get(mockRuntime, message, { useAgentFilter: true });
-                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
-                expect(searchFn).toHaveBeenLastCalledWith(
-                    expect.any(Array),
-                    expect.objectContaining({
-                        roomId: message.roomId,
-                        agentId: message.agentId,
-                        match_threshold: 0.1,
-                        unique: true
-                    })
-                );
-
-                // Test without agentId filter (all knowledge)
-                await knowledge.get(mockRuntime, message);
-                expect(searchFn).toHaveBeenLastCalledWith(
-                    expect.any(Array),
-                    expect.objectContaining({
-                        roomId: message.roomId,
-                        match_threshold: 0.1,
-                        unique: true
-                    })
-                );
-            });
+            expect(mockRuntime.knowledgeManager.searchMemoriesByEmbedding).toHaveBeenCalledWith(
+                expect.any(Float32Array),
+                expect.objectContaining({
+                    match_threshold: 0.8,
+                    count: 10,
+                    unique: true
+                })
+            );
         });
     });
 

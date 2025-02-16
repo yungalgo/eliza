@@ -1556,5 +1556,29 @@ export interface SearchOptions {
     count?: number;
     roomId: UUID;
     unique?: boolean;
-    agentId?: UUID;  // Add optional agentId
+    useAgentFilter?: boolean;
+}
+
+/**
+ * Interface for loading knowledge files in any environment
+ */
+export interface IKnowledgeLoader {
+    /**
+     * Load content from a source (file path or URL)
+     */
+    loadContent(source: {
+        path?: string;
+        content?: string;
+        metadata?: Record<string, any>;
+    }): Promise<{
+        text: string;
+        metadata?: Record<string, any>;
+        source: string;
+        type: 'rag' | 'static';
+    }>;
+
+    /**
+     * Check if a source exists and is accessible
+     */
+    exists(path: string): Promise<boolean>;
 }
