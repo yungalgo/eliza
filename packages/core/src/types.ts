@@ -1547,3 +1547,11 @@ export interface ChunkRow {
     id: string;
     // Add other properties if needed
 }
+
+export interface SearchOptions {
+    match_threshold?: number;
+    count?: number;
+    roomId: UUID;
+    unique?: boolean;
+    agentId?: UUID;  // Add optional agentId
+}

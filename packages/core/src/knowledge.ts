@@ -1,6 +1,6 @@
 import type { AgentRuntime } from "./runtime.ts";
 import { embed, getEmbeddingZeroVector } from "./embedding.ts";
-import type { KnowledgeItem, UUID, Memory } from "./types.ts";
+import type { KnowledgeItem, UUID, Memory, SearchOptions } from "./types.ts";
 import { stringToUuid } from "./uuid.ts";
 import { splitChunks } from "./generation.ts";
 import elizaLogger from "./logger.ts";
@@ -8,11 +8,7 @@ import elizaLogger from "./logger.ts";
 async function get(
     runtime: AgentRuntime,
     message: Memory,
-    options: { 
-        agentId?: UUID,
-        count?: number,  // Optional result limit
-        matchThreshold?: number 
-    } = {}
+    opts?: { useAgentFilter?: boolean }
 ): Promise<KnowledgeItem[]> {
     // Validate message
     if (!message?.content?.text) {
@@ -39,16 +35,17 @@ async function get(
 
     const embedding = await embed(runtime, processed);
     
-    // Match the expected interface
-    const fragments = await runtime.knowledgeManager.searchMemoriesByEmbedding(
-        embedding,
-        {
-            roomId: message.roomId,
-            count: options.count || 5,
-            match_threshold: options.matchThreshold || 0.1,
-            unique: true
-        }
-    );
+    const searchOptions: SearchOptions = {
+        roomId: message.roomId,
+        match_threshold: 0.1,
+        unique: true
+    };
+
+    if (opts?.useAgentFilter && message.agentId) {
+        searchOptions.agentId = message.agentId;
+    }
+
+    const fragments = await runtime.knowledgeManager.searchMemoriesByEmbedding(embedding, searchOptions);
 
     const uniqueSources = [
         ...new Set(

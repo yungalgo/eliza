@@ -153,6 +153,61 @@ describe("Knowledge Module", () => {
                 expect(searchFn).toHaveBeenCalled();
                 expect(Array.isArray(searchFn.mock.calls[0][0])).toBe(true);
             });
+
+            it("should fetch knowledge with specific agentId", async () => {
+                const message: Memory = {
+                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                    content: { text: "test query" },
+                    userId: "test-user-0000-0000-0000-000000000000" as UUID
+                };
+
+                await knowledge.get(mockRuntime, message, { useAgentFilter: true });
+
+                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
+                expect(searchFn).toHaveBeenCalledWith(
+                    expect.any(Array),
+                    expect.objectContaining({
+                        roomId: "test-room-0000-0000-0000-000000000000",
+                        agentId: "test-agent-0000-0000-0000-000000000000",
+                        match_threshold: 0.1,
+                        unique: true
+                    })
+                );
+            });
+
+            it("should support both filtered and unfiltered agentId queries", async () => {
+                const message: Memory = {
+                    agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                    roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                    content: { text: "test query" },
+                    userId: "test-user-0000-0000-0000-000000000000" as UUID
+                };
+
+                // Test with agentId filter
+                await knowledge.get(mockRuntime, message, { useAgentFilter: true });
+                const searchFn = mockRuntime.knowledgeManager.searchMemoriesByEmbedding as jest.Mock;
+                expect(searchFn).toHaveBeenLastCalledWith(
+                    expect.any(Array),
+                    expect.objectContaining({
+                        roomId: message.roomId,
+                        agentId: message.agentId,
+                        match_threshold: 0.1,
+                        unique: true
+                    })
+                );
+
+                // Test without agentId filter (all knowledge)
+                await knowledge.get(mockRuntime, message);
+                expect(searchFn).toHaveBeenLastCalledWith(
+                    expect.any(Array),
+                    expect.objectContaining({
+                        roomId: message.roomId,
+                        match_threshold: 0.1,
+                        unique: true
+                    })
+                );
+            });
         });
     });
 });
