@@ -21,6 +21,54 @@ vi.mock("../uuid", () => ({
 }));
 
 describe("Knowledge Module", () => {
+    let mockRuntime: AgentRuntime;
+
+    beforeEach(() => {
+        mockRuntime = {
+            agentId: "test-agent",
+            character: {
+                modelProvider: "openai",
+            },
+            messageManager: {
+                getCachedEmbeddings: vi.fn().mockResolvedValue([]),
+            },
+            knowledgeManager: {
+                searchMemoriesByEmbedding: vi.fn().mockResolvedValue([
+                    {
+                        content: {
+                            text: "test fragment",
+                            source: "source1",
+                            type: "rag",
+                            metadata: {
+                                author: "Test Author",
+                                category: "Test Category"
+                            }
+                        },
+                        similarity: 0.9,
+                    },
+                ]),
+                createMemory: vi.fn().mockResolvedValue(undefined),
+            },
+            documentsManager: {
+                getMemoryById: vi.fn().mockResolvedValue({
+                    id: "source1",
+                    agentId: "test-agent",
+                    content: {
+                        text: "test document",
+                        type: "rag",
+                        metadata: {
+                            author: "Test Author",
+                            category: "Test Category"
+                        },
+                        source: "test-file.md"
+                    },
+                    createdAt: Date.now()
+                }),
+                createMemory: vi.fn().mockResolvedValue(undefined),
+            },
+        } as unknown as AgentRuntime;
+    });
+
     describe("preprocess", () => {
         it("should handle invalid inputs", () => {
             expect(knowledge.preprocess("" as any)).toBe("");
@@ -68,39 +116,6 @@ describe("Knowledge Module", () => {
     });
 
     describe("get and set", () => {
-        let mockRuntime: AgentRuntime;
-
-        beforeEach(() => {
-            mockRuntime = {
-                agentId: "test-agent",
-                character: {
-                    modelProvider: "openai",
-                },
-                messageManager: {
-                    getCachedEmbeddings: vi.fn().mockResolvedValue([]),
-                },
-                knowledgeManager: {
-                    searchMemoriesByEmbedding: vi.fn().mockResolvedValue([
-                        {
-                            content: {
-                                text: "test fragment",
-                                source: "source1",
-                            },
-                            similarity: 0.9,
-                        },
-                    ]),
-                    createMemory: vi.fn().mockResolvedValue(undefined),
-                },
-                documentsManager: {
-                    getMemoryById: vi.fn().mockResolvedValue({
-                        id: "source1",
-                        content: { text: "test document" },
-                    }),
-                    createMemory: vi.fn().mockResolvedValue(undefined),
-                },
-            } as unknown as AgentRuntime;
-        });
-
         describe("get", () => {
             it("should handle invalid messages", async () => {
                 const invalidMessage = {} as Memory;
@@ -208,6 +223,83 @@ describe("Knowledge Module", () => {
                     })
                 );
             });
+        });
+    });
+
+    describe("Knowledge Type Updates", () => {
+        it("should support both RAG and static knowledge types", async () => {
+            const ragKnowledge: KnowledgeItem = {
+                id: "test-id-0000-0000-0000-000000000000" as UUID,
+                agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                content: {
+                    text: "RAG test content",
+                    type: "rag",
+                    source: "test-source",
+                    metadata: { test: "data" }
+                },
+                createdAt: Date.now()
+            };
+
+            const staticKnowledge: KnowledgeItem = {
+                id: "test-id-0000-0000-0000-000000000001" as UUID,
+                agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                content: {
+                    text: "Static test content",
+                    type: "static",
+                    source: "inline",
+                    metadata: { test: "data" }
+                },
+                createdAt: Date.now()
+            };
+
+            // Test setting both types
+            await knowledge.set(mockRuntime, ragKnowledge);
+            await knowledge.set(mockRuntime, staticKnowledge);
+
+            // Test retrieving with content matching RAG knowledge
+            const results = await knowledge.get(mockRuntime, {
+                agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                content: { text: "RAG test" },
+                userId: "test-user-0000-0000-0000-000000000000" as UUID
+            });
+
+            expect(results.length).toBeGreaterThan(0);
+            expect(results[0]).toHaveProperty('content.type');
+            expect(results[0]).toHaveProperty('createdAt');
+            expect(results[0]).toHaveProperty('content.metadata');
+        });
+
+        it("should preserve metadata and source information", async () => {
+            const testKnowledge: KnowledgeItem = {
+                id: "test-id-0000-0000-0000-000000000002" as UUID,
+                agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                content: {
+                    text: "Test content with metadata",
+                    type: "static",
+                    source: "test-file.md",
+                    metadata: {
+                        author: "Test Author",
+                        category: "Test Category"
+                    }
+                },
+                createdAt: Date.now()
+            };
+
+            await knowledge.set(mockRuntime, testKnowledge);
+
+            const results = await knowledge.get(mockRuntime, {
+                agentId: "test-agent-0000-0000-0000-000000000000" as UUID,
+                roomId: "test-room-0000-0000-0000-000000000000" as UUID,
+                content: { text: "Test content" },
+                userId: "test-user-0000-0000-0000-000000000000" as UUID
+            });
+
+            expect(results[0].content.metadata).toEqual({
+                author: "Test Author",
+                category: "Test Category"
+            });
+            expect(results[0].content.source).toBe("test-file.md");
         });
     });
 });

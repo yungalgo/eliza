@@ -1496,11 +1496,14 @@ export enum LoggingLevel {
 export interface KnowledgeItem {
     id: UUID;
     agentId: UUID;
-    content: Content;
-    embedding?: Float32Array;
-    createdAt?: number;
-    similarity?: number;
-    score?: number;
+    content: {
+        text: string;
+        metadata?: Record<string, any>;
+        embedding?: Float32Array;
+        source?: string;
+        type?: 'rag' | 'static';
+    };
+    createdAt: number;
 }
 
 export interface ActionResponse {

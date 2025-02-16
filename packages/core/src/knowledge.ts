@@ -70,7 +70,8 @@ async function get(
             id: memory.id,
             agentId: memory.agentId,
             content: memory.content,
-            similarity: memory.similarity
+            similarity: memory.similarity,
+            createdAt: memory.createdAt
         }));
 }
 

@@ -620,6 +620,7 @@ export class AgentRuntime implements IAgentRuntime {
                 content: {
                     text: item,
                 },
+                createdAt: Date.now()
             });
         }
     }
@@ -1585,12 +1586,16 @@ Text: ${attachment.text}
                     }
                     content = {
                         text: readFileSync(filePath, 'utf-8'),
-                        metadata: source.metadata
+                        metadata: source.metadata,
+                        source: source.path,  // Add source
+                        type: 'static'  // Default to static for file imports
                     };
                 } else if (source.content) {
                     content = {
                         text: source.content,
-                        metadata: source.metadata
+                        metadata: source.metadata,
+                        source: 'inline',  // Mark as inline content
+                        type: 'static'
                     };
                 } else {
                     throw new Error('Knowledge source must have either path or content');
@@ -1600,7 +1605,7 @@ Text: ${attachment.text}
                     id: v4() as UUID,
                     agentId: this.agentId,
                     content,
-                    createdAt: Date.now()
+                    createdAt: Date.now()  // Make sure createdAt is included
                 };
 
                 await knowledge.set(this, knowledgeItem);
