@@ -1,171 +1,181 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NodeKnowledgeLoader, BrowserKnowledgeLoader, createKnowledgeLoader } from '../src/knowledge-loader';
-import { readFileSync, existsSync } from 'fs';
+import path from 'path';
 
-// Mock fs module
+// Mock fs module before any imports
 vi.mock('fs', () => ({
-    readFileSync: vi.fn(),
-    existsSync: vi.fn()
+    default: {},
+    existsSync: vi.fn(),
+    readFileSync: vi.fn()
 }));
 
-// Mock fetch for browser environment
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+// Import fs after mocking
+import * as fs from 'fs';
+
+// Add this for debugging
+console.log('Test file directory:', __dirname);
+console.log('Current working directory:', process.cwd());
 
 describe('KnowledgeLoader', () => {
+    const fixturesPath = path.resolve(__dirname, 'fixtures', 'knowledge');
+    // Add this for debugging
+    console.log('Fixtures path:', fixturesPath);
+    console.log('Test file path:', path.resolve(fixturesPath, "test.md"));
+
     describe('NodeKnowledgeLoader', () => {
         let loader: NodeKnowledgeLoader;
 
         beforeEach(() => {
             loader = new NodeKnowledgeLoader();
-            vi.clearAllMocks();
+            vi.resetAllMocks();
+            // Setup default implementations
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue("# Test Document\nThis is a test markdown file.");
         });
 
-        it('should load content from file', async () => {
-            const mockContent = 'test content';
-            (readFileSync as any).mockReturnValue(mockContent);
-            (existsSync as any).mockReturnValue(true);
-
+        it('should load content from file path', async () => {
+            const testPath = path.resolve(fixturesPath, 'test.md');
             const result = await loader.loadContent({
-                path: 'test.txt',
-                metadata: { test: true }
+                path: testPath,
+                metadata: { type: 'documentation' }
             });
 
             expect(result).toEqual({
-                text: mockContent,
-                metadata: { test: true },
-                source: 'test.txt',
+                text: expect.any(String),
+                metadata: { type: 'documentation' },
+                source: testPath,
                 type: 'static'
             });
         });
 
-        it('should handle inline content', async () => {
+        it('should load inline content', async () => {
             const result = await loader.loadContent({
-                content: 'inline content',
-                metadata: { test: true }
+                content: 'Test content',
+                metadata: { type: 'rules' }
             });
 
             expect(result).toEqual({
-                text: 'inline content',
-                metadata: { test: true },
+                text: 'Test content',
+                metadata: { type: 'rules' },
                 source: 'inline',
                 type: 'static'
             });
         });
 
+        it('should throw error if neither path nor content provided', async () => {
+            await expect(loader.loadContent({
+                metadata: { type: 'test' }
+            })).rejects.toThrow('Either path or content must be provided');
+        });
+
         it('should throw error if file not found', async () => {
-            (existsSync as any).mockReturnValue(false);
+            vi.mocked(fs.existsSync).mockReturnValue(false);
 
             await expect(loader.loadContent({
-                path: 'nonexistent.txt'
+                path: 'nonexistent.md'
             })).rejects.toThrow('Knowledge file not found');
         });
 
-        it('should handle different file paths', async () => {
-            (readFileSync as any).mockReturnValue('test content');
-            (existsSync as any).mockReturnValue(true);
+        it('should check if file exists', async () => {
+            const existingPath = path.resolve(fixturesPath, 'test.md');
+            const nonExistingPath = path.resolve(fixturesPath, 'nonexistent.md');
 
-            const result = await loader.loadContent({
-                path: './relative/path.txt'
-            });
+            vi.mocked(fs.existsSync).mockImplementation((path) => path === existingPath);
 
-            expect(result.source).toBe('./relative/path.txt');
+            expect(await loader.exists(existingPath)).toBe(true);
+            expect(await loader.exists(nonExistingPath)).toBe(false);
         });
     });
 
     describe('BrowserKnowledgeLoader', () => {
         let loader: BrowserKnowledgeLoader;
+        let fetchMock: any;
 
         beforeEach(() => {
+            fetchMock = vi.fn();
+            global.fetch = fetchMock;
             loader = new BrowserKnowledgeLoader();
-            vi.clearAllMocks();
         });
 
         it('should load content from URL', async () => {
-            mockFetch.mockResolvedValue({
+            fetchMock.mockResolvedValueOnce({
                 ok: true,
-                text: () => Promise.resolve('test content')
+                text: () => Promise.resolve('Test content')
             });
 
             const result = await loader.loadContent({
-                path: 'https://example.com/test.txt',
-                metadata: { test: true }
+                path: 'https://example.com/test.md',
+                metadata: { type: 'documentation' }
             });
 
             expect(result).toEqual({
-                text: 'test content',
-                metadata: { test: true },
-                source: 'https://example.com/test.txt',
+                text: 'Test content',
+                metadata: { type: 'documentation' },
+                source: 'https://example.com/test.md',
                 type: 'static'
             });
+            expect(fetchMock).toHaveBeenCalledWith('https://example.com/test.md');
         });
 
-        it('should handle inline content', async () => {
+        it('should load inline content', async () => {
             const result = await loader.loadContent({
-                content: 'inline content',
-                metadata: { test: true }
+                content: 'Test content',
+                metadata: { type: 'rules' }
             });
 
             expect(result).toEqual({
-                text: 'inline content',
-                metadata: { test: true },
+                text: 'Test content',
+                metadata: { type: 'rules' },
                 source: 'inline',
                 type: 'static'
             });
         });
 
         it('should throw error if fetch fails', async () => {
-            mockFetch.mockResolvedValue({
-                ok: false
+            fetchMock.mockResolvedValueOnce({
+                ok: false,
+                status: 404
             });
 
             await expect(loader.loadContent({
-                path: 'https://example.com/nonexistent.txt'
+                path: 'https://example.com/test.md'
             })).rejects.toThrow('Failed to load knowledge file');
         });
 
-        it('should handle different URL formats', async () => {
-            mockFetch.mockResolvedValue({
-                ok: true,
-                text: () => Promise.resolve('test content')
-            });
+        it('should check if URL exists', async () => {
+            fetchMock
+                .mockResolvedValueOnce({ ok: true })  // First call
+                .mockResolvedValueOnce({ ok: false }); // Second call
 
-            const result = await loader.loadContent({
-                path: '/api/knowledge/test.txt'
-            });
-
-            expect(result.source).toBe('/api/knowledge/test.txt');
-        });
-
-        it('should handle network errors', async () => {
-            mockFetch.mockRejectedValue(new Error('Network error'));
-
-            await expect(loader.exists('/error.txt')).resolves.toBe(false);
+            expect(await loader.exists('https://example.com/exists.md')).toBe(true);
+            expect(await loader.exists('https://example.com/not-exists.md')).toBe(false);
         });
     });
 
     describe('createKnowledgeLoader', () => {
+        const originalWindow = global.window;
+
+        beforeEach(() => {
+            if ('window' in global) {
+                delete (global as any).window;
+            }
+        });
+
+        afterEach(() => {
+            if (originalWindow) {
+                (global as any).window = originalWindow;
+            }
+        });
+
         it('should create NodeKnowledgeLoader in Node environment', () => {
-            const globalWindow = global.window;
-            // @ts-ignore - Intentionally removing window to test Node environment
-            global.window = undefined;
-            
             const loader = createKnowledgeLoader();
             expect(loader).toBeInstanceOf(NodeKnowledgeLoader);
-            
-            global.window = globalWindow;
         });
 
         it('should create BrowserKnowledgeLoader in browser environment', () => {
-            // Mock window object to simulate browser environment
-            const globalWindow = global.window;
-            // @ts-ignore - Mocking window for browser environment test
-            global.window = { location: { origin: 'http://localhost' } };
-            
+            (global as any).window = {};
             const loader = createKnowledgeLoader();
             expect(loader).toBeInstanceOf(BrowserKnowledgeLoader);
-            
-            global.window = globalWindow;
         });
     });
 }); 

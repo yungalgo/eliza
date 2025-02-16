@@ -1,0 +1,3 @@
+This is a plain text file.
+It contains knowledge for testing purposes.
+No special formatting here.

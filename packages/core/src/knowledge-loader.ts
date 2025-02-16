@@ -1,6 +1,6 @@
 import { IKnowledgeLoader } from './types';
 import { join } from 'path';
-import { readFileSync, existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 
 export class NodeKnowledgeLoader implements IKnowledgeLoader {
     async loadContent(source: {
@@ -21,13 +21,12 @@ export class NodeKnowledgeLoader implements IKnowledgeLoader {
             throw new Error('Either path or content must be provided');
         }
 
-        const filePath = join(process.cwd(), source.path);
-        if (!existsSync(filePath)) {
-            throw new Error(`Knowledge file not found: ${filePath}`);
+        if (!existsSync(source.path)) {
+            throw new Error(`Knowledge file not found: ${source.path}`);
         }
 
         return {
-            text: readFileSync(filePath, 'utf-8'),
+            text: readFileSync(source.path, 'utf-8'),
             metadata: source.metadata,
             source: source.path,
             type: 'static' as const
@@ -35,7 +34,7 @@ export class NodeKnowledgeLoader implements IKnowledgeLoader {
     }
 
     async exists(path: string): Promise<boolean> {
-        return existsSync(join(process.cwd(), path));
+        return existsSync(path);
     }
 }
 
