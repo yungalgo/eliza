@@ -12,7 +12,10 @@ const knowledgeLoader = createKnowledgeLoader();
 async function get(
     runtime: AgentRuntime,
     message: Memory,
-    options: SearchOptions = { roomId: runtime.agentId as UUID }
+    options: SearchOptions = { 
+        roomId: runtime.agentId as UUID,
+        useAgentFilter: false
+    }
 ): Promise<KnowledgeItem[]> {
     try {
         const embedding = await runtime.messageManager.getCachedEmbeddings(message.content.text);
@@ -21,14 +24,17 @@ async function get(
             return [];
         }
 
+        const searchOptions = {
+            match_threshold: options.match_threshold || 0.7,
+            count: options.count || 5,
+            roomId: options.roomId,
+            unique: options.unique,
+            ...(options.useAgentFilter ? { agentId: runtime.agentId } : {})
+        };
+
         const memories = await runtime.knowledgeManager.searchMemoriesByEmbedding(
             embedding[0].embedding,
-            {
-                match_threshold: options.match_threshold || 0.7,
-                count: options.count || 5,
-                roomId: options.roomId,
-                unique: options.unique
-            }
+            searchOptions
         );
 
         return memories.map(memory => ({

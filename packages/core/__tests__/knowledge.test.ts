@@ -223,6 +223,96 @@ describe("Knowledge Module", () => {
                 })
             );
         });
+
+        it("should filter by agentId when useAgentFilter is true", async () => {
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            await knowledge.get(mockRuntime, message, {
+                roomId: "test-room" as UUID,
+                useAgentFilter: true
+            });
+
+            expect(mockRuntime.knowledgeManager.searchMemoriesByEmbedding).toHaveBeenCalledWith(
+                expect.any(Float32Array),
+                expect.objectContaining({
+                    agentId: "test-agent"
+                })
+            );
+        });
+
+        it("should not filter by agentId when useAgentFilter is false", async () => {
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            await knowledge.get(mockRuntime, message, {
+                roomId: "test-room" as UUID,
+                useAgentFilter: false
+            });
+
+            const searchCall = vi.mocked(mockRuntime.knowledgeManager.searchMemoriesByEmbedding).mock.calls[0][1];
+            expect(searchCall).not.toHaveProperty('agentId');
+        });
+
+        it("should not filter by agentId by default", async () => {
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            await knowledge.get(mockRuntime, message);
+
+            const searchCall = vi.mocked(mockRuntime.knowledgeManager.searchMemoriesByEmbedding).mock.calls[0][1];
+            expect(searchCall).not.toHaveProperty('agentId');
+        });
+
+        it("should return all matching knowledge items regardless of agentId when not filtering", async () => {
+            // Mock multiple results from different agents
+            mockRuntime.knowledgeManager.searchMemoriesByEmbedding = vi.fn().mockResolvedValue([
+                {
+                    id: "test-id-1" as UUID,
+                    agentId: "test-agent-1" as UUID,
+                    content: { text: "content 1" },
+                    createdAt: Date.now()
+                },
+                {
+                    id: "test-id-2" as UUID,
+                    agentId: "test-agent-2" as UUID,
+                    content: { text: "content 2" },
+                    createdAt: Date.now()
+                }
+            ]);
+
+            const message: Memory = {
+                id: "test-id" as UUID,
+                userId: "test-user" as UUID,
+                agentId: "test-agent" as UUID,
+                roomId: "test-room" as UUID,
+                content: { text: "test query" }
+            };
+
+            const results = await knowledge.get(mockRuntime, message, {
+                roomId: "test-room" as UUID,
+                useAgentFilter: false
+            });
+
+            expect(results).toHaveLength(2);
+            expect(results[0].agentId).toBe("test-agent-1");
+            expect(results[1].agentId).toBe("test-agent-2");
+        });
     });
 
     describe("Knowledge Type Updates", () => {
